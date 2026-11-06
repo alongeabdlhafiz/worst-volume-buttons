@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scream Volume</title>
+  <link rel="stylesheet" href="./output.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center gap-6 select-none px-4">
+
+  <h1 class="text-3xl font-bold">Volume</h1>
+  <div id="face" class="text-7xl">😐</div>
+  <div id="display" class="text-7xl font-mono">0</div>
+
+  <!-- Volume bar -->
+  <div class="w-150 max-w-[90vw]">
+    <p class="text-sm text-slate-400 mb-1">Volume</p>
+    <div class="h-4 bg-slate-700 rounded-full overflow-hidden">
+      <div id="volumeBar" class="h-full w-0 bg-pink-500"></div>
+    </div>
+  </div>
+
+  <!-- Loudness meter with a threshold marker -->
+  <div class="w-150 max-w-[90vw]">
+    <p class="text-sm text-slate-400 mb-1">Your loudness (get past the white line)</p>
+    <div class="relative h-4 bg-slate-700 rounded-full overflow-hidden">
+      <div id="loudBar" class="h-full w-0 bg-emerald-400"></div>
+      <div id="thresholdMarker" class="absolute top-0 h-full w-1 bg-white" style="left: 20%"></div>
+    </div>
+  </div>
+
+  <p id="message" class="h-6 text-slate-300 text-center"></p>
+
+  <button
+    id="startBtn"
+    class="px-6 py-3 rounded-full bg-pink-500 hover:bg-pink-400 font-bold text-lg"
+  >
+    Start screaming
+  </button>
+
+  <script>
+    const startBtn = document.getElementById("startBtn");
+    const display = document.getElementById("display");
+    const face = document.getElementById("face");
+    const volumeBar = document.getElementById("volumeBar");
+    const loudBar = document.getElementById("loudBar");
+    const thresholdMarker = document.getElementById("thresholdMarker");
+    const message = document.getElementById("message");
+
+    // Tweak these to change the difficulty
+    const CALIBRATION_MS = 2000; // how long we listen to the quiet room first
+    const BASE_MARGIN = 0.04;    // how far above room noise you must be to count as screaming
+    const EXTRA_MARGIN = 0.15;   // extra loudness needed as volume approaches 100
+    const RISE = 0.3;            // volume gained per frame while screaming
+    const FALL = 0.7;            // volume lost per frame while not screaming (faster than rise)
+    const METER_MAX = 0.4;       // loudness value that fills the meter completely
+
+    const TAUNTS_LOW = ["Louder.", "Is that your scream?", "My grandma screams better.", "Do you even want volume?"];
+    const TAUNTS_FALL = ["Don't stop now!", "Dropping...", "Lungs tired already?", "Keep going!"];
+    const TAUNTS_HIGH = ["THERE IT IS!", "Your neighbors know you now.", "Maximum chaos."];
+
+    let analyser, buffer;
+    let noiseFloor = 0;
+    let smoothed = 0;
+    let volume = 0;
+    let lastTaunt = 0;
+
+    // Loudness of one chunk of audio: root mean square of the samples
+    function getRMS() {
+      analyser.getFloatTimeDomainData(buffer);
+      let sum = 0;
+      for (let i = 0; i < buffer.length; i++) {
+        sum += buffer[i] * buffer[i];
+      }
+      return Math.sqrt(sum / buffer.length);
+    }
+
+    function setMessage(text) {
+      message.textContent = text;
+    }
+
+    function pick(list) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    function faceFor(ratio) {
+      if (ratio < 0.5) return "😐";
+      if (ratio < 1) return "😮";
+      if (ratio < 1.6) return "😬";
+      return "😱";
+    }
+
+    async function start() {
+      startBtn.disabled = true;
+      startBtn.classList.add("opacity-50");
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        buffer = new Float32Array(analyser.fftSize);
+        source.connect(analyser);
+      } catch (err) {
+        setMessage("Mic blocked. Allow it and refresh. (Use localhost, not file://)");
+        startBtn.disabled = false;
+        startBtn.classList.remove("opacity-50");
+        return;
+      }
+
+      // Calibration: measure the quiet room first
+      setMessage("Stay quiet for 2 seconds...");
+      const readings = [];
+      const calibStart = performance.now();
+
+      function calibrate() {
+        readings.push(getRMS());
+        if (performance.now() - calibStart < CALIBRATION_MS) {
+          requestAnimationFrame(calibrate);
+        } else {
+          noiseFloor = readings.reduce((a, b) => a + b, 0) / readings.length;
+          setMessage("SCREAM!");
+          startBtn.classList.add("hidden");
+          loop();
+        }
+      }
+      calibrate();
+    }
+
+    function loop() {
+      // Smooth so one cough doesn't spike the volume
+      smoothed = smoothed * 0.8 + getRMS() * 0.2;
+
+      // The more volume you have, the louder you must scream to keep climbing
+      const threshold = noiseFloor + BASE_MARGIN + (volume / 100) * EXTRA_MARGIN;
+      const screaming = smoothed > threshold;
+
+      if (screaming) {
+        volume += RISE;
+      } else {
+        volume -= FALL;
+      }
+      volume = Math.max(0, Math.min(100, volume));
+
+      // Update the screen
+      display.textContent = Math.round(volume);
+      volumeBar.style.width = `${volume}%`;
+      loudBar.style.width = `${Math.min(smoothed / METER_MAX, 1) * 100}%`;
+      thresholdMarker.style.left = `${Math.min(threshold / METER_MAX, 1) * 100}%`;
+      face.textContent = faceFor(smoothed / threshold);
+
+      // A taunt every couple of seconds
+      const now = performance.now();
+      if (now - lastTaunt > 2500) {
+        lastTaunt = now;
+        if (volume > 80) setMessage(pick(TAUNTS_HIGH));
+        else if (screaming) setMessage("Yes! Keep going!");
+        else if (volume > 5) setMessage(pick(TAUNTS_FALL));
+        else setMessage(pick(TAUNTS_LOW));
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    startBtn.addEventListener("click", start);
+  </script>
+</body>
+</html>

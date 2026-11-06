@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vol the Volume Gremlin</title>
+  <link rel="stylesheet" href="./output.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center gap-5 select-none px-4 py-6">
+
+  <h1 class="text-3xl font-bold">Volume</h1>
+  <p class="text-slate-400 text-sm text-center max-w-md">
+    You can't touch the volume. You can only look after Vol, who controls it.
+  </p>
+
+  <div id="display" class="text-7xl font-mono">50</div>
+  <div class="w-125 max-w-[90vw] h-4 bg-slate-700 rounded-full overflow-hidden">
+    <div id="volumeBar" class="h-full bg-pink-500" style="width: 50%"></div>
+  </div>
+
+  <!-- The gremlin: move your mouse over it to pet it -->
+  <div id="gremlinWrap" class="transition-all duration-300">
+    <div id="gremlin" class="text-9xl cursor-pointer" title="Pet me">😊</div>
+  </div>
+
+  <p id="message" class="h-6 text-slate-300 text-center"></p>
+
+  <!-- Needs -->
+  <div class="w-150 max-w-[90vw] flex flex-col gap-2 text-sm">
+    <div>
+      <span class="text-slate-400">Fed</span>
+      <div class="h-3 bg-slate-700 rounded-full overflow-hidden"><div id="fedBar" class="h-full bg-orange-400"></div></div>
+    </div>
+    <div>
+      <span class="text-slate-400">Entertained</span>
+      <div class="h-3 bg-slate-700 rounded-full overflow-hidden"><div id="funBar" class="h-full bg-sky-400"></div></div>
+    </div>
+    <div>
+      <span class="text-slate-400">Clean</span>
+      <div class="h-3 bg-slate-700 rounded-full overflow-hidden"><div id="cleanBar" class="h-full bg-emerald-400"></div></div>
+    </div>
+  </div>
+
+  <button id="feedBtn" class="px-6 py-3 rounded-full bg-orange-500 hover:bg-orange-400 font-bold text-lg">
+    🍖 Feed Vol
+  </button>
+
+  <!-- Poops show up here. Click them to clean up. -->
+  <div id="poopArea" class="flex flex-wrap gap-2 min-h-12 text-4xl"></div>
+
+  <p class="text-slate-500 text-sm">
+    Alive for <span id="alive">0:00</span>. Vol is not impressed.
+  </p>
+
+  <script>
+    const display = document.getElementById("display");
+    const volumeBar = document.getElementById("volumeBar");
+    const gremlin = document.getElementById("gremlin");
+    const gremlinWrap = document.getElementById("gremlinWrap");
+    const message = document.getElementById("message");
+    const fedBar = document.getElementById("fedBar");
+    const funBar = document.getElementById("funBar");
+    const cleanBar = document.getElementById("cleanBar");
+    const feedBtn = document.getElementById("feedBtn");
+    const poopArea = document.getElementById("poopArea");
+    const alive = document.getElementById("alive");
+
+    // Tweak these to change how needy Vol is
+    const FED_DECAY = 0.12;      // fed lost per tick (a tick is 100ms)
+    const FUN_DECAY = 0.15;      // entertainment lost per tick
+    const FEED_AMOUNT = 25;      // fed gained per feeding
+    const PET_AMOUNT = 1.5;      // entertainment gained per mouse move over Vol
+    const POOP_CHANCE = 0.6;     // chance a feeding leads to a poop
+    const SLEEP_MS = 10000;      // how long Vol sleeps when overfed
+    const TANTRUM_MS = 5000;     // how long a tantrum lasts
+    const SLIDE = 0.04;          // how quickly volume drifts toward its target
+
+    const MESSAGES = {
+      happy: ["Vol is content. Volume: acceptable.", "Vol hums quietly.", "Vol approves. For now."],
+      grumpy: ["Vol is grumpy.", "Vol wants attention.", "Vol sighs dramatically."],
+      screaming: ["VOL IS STARVING!", "FEED. ME.", "AAAAAAAAAA!"],
+      sleeping: ["Zzz... Vol overate.", "Vol is out cold. Volume: 0."],
+      sulking: ["Vol is sulking. Pet it.", "Vol has muted itself out of spite."],
+      tantrum: ["Vol is throwing a tantrum!", "Vol decided to do the opposite."],
+    };
+
+    let fed = 60;
+    let fun = 60;
+    let poops = 0;
+    let volume = 50;
+    let sulking = false;
+    let sleepUntil = 0;
+    let tantrumUntil = 0;
+    let tantrumTarget = 0;
+    let lastState = "";
+    const startTime = Date.now();
+
+    function rand(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function pick(list) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    let nextTantrum = Date.now() + rand(45000, 90000);
+
+    function setMessage(text) {
+      message.textContent = text;
+    }
+
+    // Vol's current state decides what the volume wants to be
+    function getState(now, mood) {
+      if (now < sleepUntil) return "sleeping";
+      if (now < tantrumUntil) return "tantrum";
+      if (sulking) return "sulking";
+      if (fed < 20) return "screaming";
+      if (mood < 50) return "grumpy";
+      return "happy";
+    }
+
+    // The heart of the project: mood and state turn into a volume
+    function targetVolume(state, mood) {
+      switch (state) {
+        case "sleeping": return 0;
+        case "sulking": return 0;
+        case "screaming": return 100;
+        case "tantrum": return tantrumTarget;
+        case "grumpy": return mood * 0.8;
+        default: return 60 + (mood - 50) / 5; // happy: about 60 to 70
+      }
+    }
+
+    function faceFor(state) {
+      if (state === "sleeping") return "😴";
+      if (state === "sulking") return "😒";
+      if (state === "screaming") return "😡";
+      if (state === "tantrum") return "🤪";
+      if (poops >= 2) return "🤢";
+      if (state === "grumpy") return "😠";
+      return "😊";
+    }
+
+    function spawnPoop() {
+      poops++;
+      const poop = document.createElement("button");
+      poop.textContent = "💩";
+      poop.className = "hover:scale-125 transition-transform";
+      poop.addEventListener("click", () => {
+        poop.remove();
+        poops = Math.max(0, poops - 1);
+        setMessage("Thank you for cleaning. Vol is mildly less disgusted.");
+      });
+      poopArea.appendChild(poop);
+    }
+
+    function feed() {
+      const now = Date.now();
+      if (now < sleepUntil) {
+        setMessage("Vol is asleep. Rude of you to try.");
+        return;
+      }
+      fed += FEED_AMOUNT;
+      if (fed > 100) {
+        fed = 100;
+        sleepUntil = now + SLEEP_MS;
+        setMessage("Overfed! Vol passed out.");
+      }
+      if (Math.random() < POOP_CHANCE) {
+        setTimeout(spawnPoop, rand(3000, 6000));
+      }
+    }
+
+    function pet() {
+      if (Date.now() < sleepUntil) return;
+      fun = Math.min(100, fun + PET_AMOUNT);
+    }
+
+    function formatTime(totalSeconds) {
+      const m = Math.floor(totalSeconds / 60);
+      const s = String(totalSeconds % 60).padStart(2, "0");
+      return `${m}:${s}`;
+    }
+
+    function tick() {
+      const now = Date.now();
+
+      // Needs slowly fall
+      fed = Math.max(0, fed - FED_DECAY);
+      fun = Math.max(0, fun - FUN_DECAY);
+      const clean = Math.max(0, 100 - poops * 25);
+      const mood = (fed + fun + clean) / 3;
+
+      // Sulk when bored to zero, forgive once petted enough
+      if (fun <= 0) sulking = true;
+      if (sulking && fun > 40) sulking = false;
+
+      // Random tantrum: Vol does the opposite of what it was doing
+      if (now >= nextTantrum) {
+        tantrumTarget = volume < 50 ? 100 : 0;
+        tantrumUntil = now + TANTRUM_MS;
+        nextTantrum = now + rand(45000, 90000);
+      }
+
+      const state = getState(now, mood);
+      const target = targetVolume(state, mood);
+      volume += (target - volume) * SLIDE;
+
+      // Show everything
+      display.textContent = Math.round(volume);
+      volumeBar.style.width = `${volume}%`;
+      fedBar.style.width = `${fed}%`;
+      funBar.style.width = `${fun}%`;
+      cleanBar.style.width = `${clean}%`;
+      gremlin.textContent = faceFor(state);
+      gremlinWrap.style.transform = `scale(${1 + volume / 200})`;
+      gremlin.classList.toggle("animate-bounce", state === "screaming" || state === "tantrum");
+      gremlin.classList.toggle("opacity-50", state === "sleeping");
+      alive.textContent = formatTime(Math.floor((now - startTime) / 1000));
+
+      // New message when Vol's state changes
+      if (state !== lastState) {
+        setMessage(pick(MESSAGES[state]));
+        lastState = state;
+      }
+    }
+
+    feedBtn.addEventListener("click", feed);
+    gremlin.addEventListener("pointermove", pet);
+    setInterval(tick, 100);
+  </script>
+</body>
+</html>

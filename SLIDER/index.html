@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Worst Volume Button</title>
+  <link rel="stylesheet" href="./output.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center gap-8 select-none overflow-hidden">
+
+  <h1 class="text-3xl font-bold">Volume</h1>
+  <div id="display" class="text-7xl font-mono">50</div>
+
+  <!-- Track: relative so the thumbs can be positioned inside it -->
+  <div id="track" class="relative w-150 max-w-[90vw] h-3 bg-slate-700 rounded-full"></div>
+
+  <p id="message" class="h-6 text-slate-400"></p>
+
+  <script>
+    const track = document.getElementById("track");
+    const display = document.getElementById("display");
+    const message = document.getElementById("message");
+
+    const DANGER_RADIUS = 100; // px: how close the cursor can get before a thumb flees
+    const WIN_CHANCE = 0.02;   // small chance per move that a thumb forgets to run
+    const DECOY_COUNT = 3;     // fake thumbs that look identical to the real one
+
+    const TAUNTS = [
+      "Too slow.",
+      "Almost.",
+      "Have you tried being faster?",
+      "Nope.",
+      "So close. Not really.",
+      "Is that all you've got?",
+    ];
+
+    let dodgeCount = 0; // panic level: goes up every dodge, resets when you catch the real one
+    const thumbs = [];
+
+    // Panic mode: slide time shrinks as dodgeCount grows (never below 60ms)
+    function slideDuration() {
+      return Math.max(60, 250 - dodgeCount * 8);
+    }
+
+    // Panic mode: jumps get longer as dodgeCount grows
+    function jumpSize() {
+      const panic = 1 + Math.min(dodgeCount * 0.03, 1);
+      return (10 + Math.random() * 20) * panic;
+    }
+
+    function place(thumb) {
+      thumb.el.style.left = `${thumb.pos}%`;
+      thumb.el.style.transitionDuration = `${slideDuration()}ms`;
+    }
+
+    function updateDisplay() {
+      display.textContent = Math.round(realThumb.pos);
+    }
+
+    function createThumb(isReal, startPos) {
+      const el = document.createElement("div");
+      el.className =
+        "absolute top-1/2 w-8 h-8 -translate-x-1/2 -translate-y-1/2 bg-pink-500 rounded-full cursor-pointer transition-[left] ease-out";
+      track.appendChild(el);
+
+      const thumb = { el, pos: startPos, isReal };
+      el.addEventListener("pointerdown", () => handleClick(thumb));
+      thumbs.push(thumb);
+      place(thumb);
+      return thumb;
+    }
+
+    function dodge(thumb, cursorX, thumbX) {
+      // Run away from whichever side the cursor is on
+      const direction = cursorX > thumbX ? -1 : 1;
+      let next = thumb.pos + direction * jumpSize();
+
+      // Cornered? Teleport somewhere random instead of getting stuck
+      if (next < 0 || next > 100) {
+        next = Math.random() * 100;
+      }
+
+      thumb.pos = next;
+      dodgeCount++;
+      place(thumb);
+
+      // Taunt now and then
+      if (Math.random() < 0.15) {
+        message.textContent = TAUNTS[Math.floor(Math.random() * TAUNTS.length)];
+      }
+    }
+
+    function handleClick(thumb) {
+      if (thumb.isReal) {
+        message.textContent = "Fine. You got me. Enjoy volume " + Math.round(thumb.pos) + ".";
+        dodgeCount = 0; // calm down
+        thumbs.forEach(place);
+      } else {
+        realThumb.pos = Math.random() * 100;
+        place(realThumb);
+        updateDisplay();
+        message.textContent = "That was a decoy! Volume is now " + Math.round(realThumb.pos) + ".";
+      }
+    }
+
+    // Build the thumbs: one real, a few decoys at random spots
+    const realThumb = createThumb(true, 50);
+    for (let i = 0; i < DECOY_COUNT; i++) {
+      createThumb(false, Math.random() * 100);
+    }
+    updateDisplay();
+
+    document.addEventListener("pointermove", (e) => {
+      thumbs.forEach((thumb) => {
+        const rect = thumb.el.getBoundingClientRect();
+        const thumbX = rect.left + rect.width / 2;
+        const thumbY = rect.top + rect.height / 2;
+
+        const distance = Math.hypot(e.clientX - thumbX, e.clientY - thumbY);
+        if (distance > DANGER_RADIUS) return;
+        if (Math.random() < WIN_CHANCE) return;
+
+        dodge(thumb, e.clientX, thumbX);
+      });
+      updateDisplay();
+    });
+  </script>
+</body>
+</html>
